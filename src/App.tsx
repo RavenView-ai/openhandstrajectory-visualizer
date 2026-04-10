@@ -299,70 +299,40 @@ const App: React.FC<{ router?: boolean }> = ({ router = true }) => {
   
   // Reusable function to fetch and extract archive
 const fetchAndExtractArchive = async (url: string): Promise<UploadContent | null> => {
-    try {
-      // Try browser-side extraction first (works for same-origin or CORS-enabled URLs)
-      try {
-        console.log('Trying browser-side extraction for:', url);
-        const response = await fetch(url);
-        if (response.ok) {
-          const arrayBuffer = await response.arrayBuffer();
-          const gzippedData = new Uint8Array(arrayBuffer);
-          
-          let decompressed: Uint8Array;
-          try {
-            decompressed = pako.ungzip(gzippedData);
-          } catch {
-            decompressed = pako.inflate(gzippedData);
-          }
-          
-          const { jsonlContent, reportContent } = extractFromTar(decompressed);
-          
-          if (jsonlContent) {
-            console.log('Successfully extracted in browser');
-            return {
-              content: {
-                fileType: 'full_archive' as const,
-                jsonlContent,
-                reportContent
-              }
-            };
-          }
-        }
-      } catch (e) {
-        console.log('Browser extraction failed, falling back to API:', e);
-      }
-
-      // Fall back to serverless API (bypasses CORS)
-      const apiUrl = `/api/extract?url=${encodeURIComponent(url)}`;
-      console.log('Fetching archive via API:', apiUrl);
-
-      const response = await fetch(apiUrl);
-
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.error || `Failed to extract archive: ${response.status}`);
-      }
-
-      const data = await response.json();
-      console.log('API response:', data);
-
-      if (!data.jsonlContent) {
-        throw new Error('No JSONL content found in archive');
-      }
-
-      console.log('Successfully extracted archive via serverless API');
-
-      // Create upload content from extracted data
-      return {
-        content: {
-          fileType: 'full_archive' as const,
-          jsonlContent: data.jsonlContent,
-          reportContent: data.reportContent
-        }
-      };
-    } catch (error) {
-      throw error;
+    // Extract tar.gz entirely in browser
+    console.log('Fetching and extracting archive in browser:', url);
+    
+    const response = await fetch(url);
+    if (!response.ok) {
+      throw new Error(`Failed to fetch archive: ${response.status} ${response.statusText}`);
     }
+
+    const arrayBuffer = await response.arrayBuffer();
+    const gzippedData = new Uint8Array(arrayBuffer);
+    
+    console.log('Decompressing gzip...');
+    let decompressed: Uint8Array;
+    try {
+      decompressed = pako.ungzip(gzippedData);
+    } catch {
+      decompressed = pako.inflate(gzippedData);
+    }
+    
+    console.log('Extracting from tar...');
+    const { jsonlContent, reportContent } = extractFromTar(decompressed);
+    
+    if (!jsonlContent) {
+      throw new Error('No JSONL content found in archive');
+    }
+
+    console.log('Successfully extracted archive');
+    return {
+      content: {
+        fileType: 'full_archive' as const,
+        jsonlContent,
+        reportContent
+      }
+    };
   };
   
   // Function to process trajectory data based on its format
