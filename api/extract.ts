@@ -1,5 +1,5 @@
-import type { VercelRequest, VercelResponse } from '@vercel/node';
 import pako from 'pako';
+import type { VercelRequest, VercelResponse } from '@vercel/node';
 
 function parseTarHeader(data: Uint8Array, offset: number): { name: string; size: number; type: number } | null {
   let isNull = true;
@@ -86,6 +86,39 @@ function extractFromTarStreaming(data: Uint8Array): { jsonlContent: string | nul
   }
 
   return { jsonlContent, reportContent };
+}
+
+export async function fetchAndExtractRemote(url: string): Promise<{ jsonlContent: string | null; reportContent: any | null }> {
+  // Try browser fetch first (for same-origin or CORS-enabled URLs)
+  try {
+    const response = await fetch(url);
+    if (response.ok) {
+      const arrayBuffer = await response.arrayBuffer();
+      const gzippedData = new Uint8Array(arrayBuffer);
+      
+      let decompressed: Uint8Array;
+      try {
+        decompressed = pako.ungzip(gzippedData);
+      } catch {
+        decompressed = pako.inflate(gzippedData);
+      }
+      
+      return extractFromTarStreaming(decompressed);
+    }
+  } catch (e) {
+    // Browser fetch failed (likely CORS), fall back to server
+    console.log('Browser fetch failed, trying server-side extraction...');
+  }
+
+  // Fall back to server-side
+  const response = await fetch(`/api/extract?url=${encodeURIComponent(url)}`);
+  const data = await response.json();
+  
+  if (!response.ok || !data.success) {
+    throw new Error(data.error || 'Failed to extract archive');
+  }
+  
+  return { jsonlContent: data.jsonlContent, reportContent: data.reportContent };
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {

@@ -10,6 +10,8 @@ import { UploadTrajectory } from './components/upload/UploadTrajectory';
 import { EvaluationUpload } from './components/upload/EvaluationUpload';
 import { UploadContent } from './types/upload';
 import { isArchiveUrl } from './utils/archive-extractor';
+import pako from 'pako';
+import { extractFromTar } from './lib/tarExtractor';
 
 const TokenPrompt: React.FC<{ isDark?: boolean }> = ({ isDark = false }) => {
   const [token, setToken] = useState('');
@@ -298,7 +300,39 @@ const App: React.FC<{ router?: boolean }> = ({ router = true }) => {
   // Reusable function to fetch and extract archive
 const fetchAndExtractArchive = async (url: string): Promise<UploadContent | null> => {
     try {
-      // Use serverless API to fetch and extract (bypasses CORS)
+      // Try browser-side extraction first (works for same-origin or CORS-enabled URLs)
+      try {
+        console.log('Trying browser-side extraction for:', url);
+        const response = await fetch(url);
+        if (response.ok) {
+          const arrayBuffer = await response.arrayBuffer();
+          const gzippedData = new Uint8Array(arrayBuffer);
+          
+          let decompressed: Uint8Array;
+          try {
+            decompressed = pako.ungzip(gzippedData);
+          } catch {
+            decompressed = pako.inflate(gzippedData);
+          }
+          
+          const { jsonlContent, reportContent } = extractFromTar(decompressed);
+          
+          if (jsonlContent) {
+            console.log('Successfully extracted in browser');
+            return {
+              content: {
+                fileType: 'full_archive' as const,
+                jsonlContent,
+                reportContent
+              }
+            };
+          }
+        }
+      } catch (e) {
+        console.log('Browser extraction failed, falling back to API:', e);
+      }
+
+      // Fall back to serverless API (bypasses CORS)
       const apiUrl = `/api/extract?url=${encodeURIComponent(url)}`;
       console.log('Fetching archive via API:', apiUrl);
 
@@ -313,7 +347,7 @@ const fetchAndExtractArchive = async (url: string): Promise<UploadContent | null
       console.log('API response:', data);
 
       if (!data.jsonlContent) {
-        throw new Error('No JSONL content found in archive. Files found: ' + (data.fileNames || []).join(', '));
+        throw new Error('No JSONL content found in archive');
       }
 
       console.log('Successfully extracted archive via serverless API');
