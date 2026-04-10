@@ -1,13 +1,7 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
 import pako from 'pako';
 
-interface TarHeader {
-  name: string;
-  size: number;
-  type: number;
-}
-
-function parseTarHeader(data: Uint8Array, offset: number): TarHeader | null {
+function parseTarHeader(data: Uint8Array, offset: number): { name: string; size: number; type: number } | null {
   let isNull = true;
   for (let i = 0; i < 512; i++) {
     if (data[offset + i] !== 0) {
@@ -25,8 +19,7 @@ function parseTarHeader(data: Uint8Array, offset: number): TarHeader | null {
         break;
       }
     }
-    const bytes = data.slice(start, end);
-    return new TextDecoder('utf8').decode(bytes);
+    return new TextDecoder('utf8').decode(data.slice(start, end));
   };
 
   const name = getString(offset, 100).trim();
@@ -38,44 +31,64 @@ function parseTarHeader(data: Uint8Array, offset: number): TarHeader | null {
   return { name, size, type };
 }
 
-function parseTar(data: Uint8Array): { files: { name: string; content: string }[] } {
-  const files: { name: string; content: string }[] = [];
-  let offset = 0;
+function extractFromTarStreaming(data: Uint8Array): { jsonlContent: string | null; reportContent: any | null } {
   const blockSize = 512;
+  let offset = 0;
   let pendingLongName: string | null = null;
+  let jsonlContent: string | null = null;
+  let reportContent: any | null = null;
 
   while (offset + blockSize <= data.length) {
     const header = parseTarHeader(data, offset);
-
     if (header === null) break;
 
     offset += blockSize;
 
     if (header.type === 0 && header.size > 0 && header.name) {
-      const fileData = data.slice(offset, offset + header.size);
       const paddedSize = Math.ceil(header.size / blockSize) * blockSize;
-      offset += paddedSize;
 
       // Handle GNU tar long link extension
       if (header.name.endsWith('@LongLink') || header.name === '././@LongLink') {
-        pendingLongName = new TextDecoder('utf8').decode(fileData).replace(/\0+$/, '');
-        continue;
+        pendingLongName = new TextDecoder('utf8').decode(data.slice(offset, offset + header.size)).replace(/\0+$/, '');
+      } else {
+        const fileName = pendingLongName || header.name;
+        pendingLongName = null;
+        const lowerName = fileName.toLowerCase();
+
+        // Only extract if it's a file we need
+        const isJsonl = lowerName.includes('output.jsonl') || lowerName.endsWith('.jsonl');
+        const isReport = lowerName.includes('output.report.json') || (lowerName.includes('report') && lowerName.endsWith('.json'));
+
+        if (isJsonl || isReport) {
+          const content = new TextDecoder('utf8').decode(data.slice(offset, offset + header.size));
+          
+          if (isJsonl) {
+            jsonlContent = content;
+          }
+          if (isReport) {
+            try {
+              reportContent = JSON.parse(content);
+            } catch (e) {
+              console.warn('Failed to parse report JSON');
+            }
+          }
+        }
       }
 
-      // Use pending long name if available
-      const fileName = pendingLongName || header.name;
-      pendingLongName = null;
+      offset += paddedSize;
+    }
 
-      const content = new TextDecoder('utf8').decode(fileData);
-      files.push({ name: fileName, content });
+    // Early exit if we found both files
+    if (jsonlContent && reportContent) {
+      console.log('Found both files, exiting early');
+      break;
     }
   }
 
-  return { files };
+  return { jsonlContent, reportContent };
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
-  // Only allow GET requests
   if (req.method !== 'GET') {
     return res.status(405).json({ error: 'Method not allowed' });
   }
@@ -86,7 +99,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(400).json({ error: 'Missing url parameter' });
   }
 
-  // Validate URL is a tar.gz
   const lowerUrl = url.toLowerCase();
   if (!lowerUrl.endsWith('.tar.gz') && !lowerUrl.endsWith('.tgz') && !lowerUrl.includes('results.tar.gz')) {
     return res.status(400).json({ error: 'URL must point to a .tar.gz file' });
@@ -95,80 +107,42 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   try {
     console.log('Fetching archive from:', url);
 
-    // Set timeout for fetch
     const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), 300000); // 5 min timeout
+    const timeout = setTimeout(() => controller.abort(), 300000);
 
-    // Fetch the archive
-    const response = await fetch(url, {
-      signal: controller.signal
-    });
-
+    const response = await fetch(url, { signal: controller.signal });
     clearTimeout(timeout);
 
     if (!response.ok) {
       throw new Error(`Failed to fetch: ${response.status} ${response.statusText}`);
     }
 
-    // Get content length for logging
     const contentLength = response.headers.get('content-length');
     console.log('Downloading archive, size:', contentLength);
 
-    // Read as array buffer
     const arrayBuffer = await response.arrayBuffer();
     const gzippedData = new Uint8Array(arrayBuffer);
     
     console.log('Decompressing gzip...');
     
-    // Use pako for decompression
     let decompressed: Uint8Array;
     try {
       const result = pako.ungzip(gzippedData);
       decompressed = result instanceof Uint8Array ? result : new Uint8Array(result);
     } catch (e) {
-      // Try as raw deflate if ungzip fails
       const result = pako.inflate(gzippedData);
       decompressed = result instanceof Uint8Array ? result : new Uint8Array(result);
     }
 
     console.log('Decompressed, size:', decompressed.length);
 
-    // Parse tar
-    const { files } = parseTar(decompressed);
-
-    console.log('Parsed tar, found', files.length, 'files');
-
-    // Find output.jsonl and output.report.json
-    let jsonlContent: string | null = null;
-    let reportContent: any | null = null;
-
-    console.log('Searching through', files.length, 'files...');
-
-    for (const file of files) {
-      const lowerName = file.name.toLowerCase();
-
-      // Look for jsonl content anywhere in filename
-      if (lowerName.includes('output.jsonl') || lowerName.endsWith('.jsonl')) {
-        jsonlContent = file.content;
-        console.log('Found output.jsonl, size:', file.content.length);
-      }
-
-      // Look for report content
-      if (lowerName.includes('output.report.json') || (lowerName.includes('report') && lowerName.endsWith('.json'))) {
-        try {
-          reportContent = JSON.parse(file.content);
-          console.log('Found report JSON:', lowerName);
-        } catch (e) {
-          console.warn('Failed to parse report JSON:', e);
-        }
-      }
-    }
+    // Extract only the files we need
+    const { jsonlContent, reportContent } = extractFromTarStreaming(decompressed);
 
     console.log('Result - jsonl:', !!jsonlContent, 'report:', !!reportContent);
 
     return res.status(200).json({
       success: true,
-      fileNames: files.map(f => f.name),
       jsonlContent,
       reportContent,
     });
