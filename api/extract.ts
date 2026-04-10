@@ -37,17 +37,20 @@ function parseTarHeader(data: Uint8Array, offset: number): TarHeader | null {
   return { name, size, type };
 }
 
-async function decompressGzip(buffer: Buffer): Promise<Buffer> {
-  const zlib = require('zlib');
-  return new Promise((resolve, reject) => {
-    zlib.unzip(buffer, (err: Error | null, result: Buffer) => {
-      if (err) reject(err);
-      else resolve(result);
-    });
+async function decompressGzip(arrayBuffer: ArrayBuffer): Promise<Uint8Array> {
+  const stream = new ReadableStream({
+    start(controller) {
+      controller.enqueue(new Uint8Array(arrayBuffer));
+      controller.close();
+    }
   });
+
+  const decompressedStream = stream.pipeThrough(new DecompressionStream('gzip'));
+  const result = await new Response(decompressedStream).arrayBuffer();
+  return new Uint8Array(result);
 }
 
-function parseTar(data: Buffer): { files: { name: string; content: string }[] } {
+function parseTar(data: Uint8Array): { files: { name: string; content: string }[] } {
   const files: { name: string; content: string }[] = [];
   let offset = 0;
   const blockSize = 512;
@@ -61,7 +64,7 @@ function parseTar(data: Buffer): { files: { name: string; content: string }[] } 
 
     if (header.type === 0 && header.size > 0 && header.name) {
       const fileData = data.slice(offset, offset + header.size);
-      const content = fileData.toString('utf8');
+      const content = new TextDecoder('utf8').decode(fileData);
       files.push({ name: header.name, content });
 
       const paddedSize = Math.ceil(header.size / blockSize) * blockSize;
@@ -101,12 +104,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     }
 
     const arrayBuffer = await response.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
 
-    console.log('Downloaded archive, size:', buffer.length);
+    console.log('Downloaded archive, size:', arrayBuffer.byteLength);
 
     // Decompress gzip
-    const decompressed = await decompressGzip(buffer);
+    const decompressed = await decompressGzip(arrayBuffer);
 
     console.log('Decompressed, size:', decompressed.length);
 
