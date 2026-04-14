@@ -36,6 +36,7 @@ export function extractFromTar(data: Uint8Array): { jsonlContent: string | null;
   let pendingLongName: string | null = null;
   let jsonlContent: string | null = null;
   let reportContent: any | null = null;
+  let largestJsonlSize = 0;
 
   while (offset + blockSize <= data.length) {
     const header = parseTarHeader(data, offset);
@@ -55,14 +56,20 @@ export function extractFromTar(data: Uint8Array): { jsonlContent: string | null;
         const lowerName = fileName.toLowerCase();
 
         // Only extract if it's a file we need
-        const isJsonl = lowerName.includes('output.jsonl') || lowerName.endsWith('.jsonl');
+        // Match only output.jsonl (main results) - not errors, costs, timelines, critic attempts
+        const isJsonl = lowerName.endsWith('/output.jsonl') || 
+                        lowerName === 'output.jsonl' ||
+                        (lowerName.includes('output.jsonl') && !lowerName.includes('errors') && !lowerName.includes('cost') && !lowerName.includes('timeline') && !lowerName.includes('critic'));
         const isReport = lowerName.includes('output.report.json') || (lowerName.includes('report') && lowerName.endsWith('.json'));
 
         if (isJsonl || isReport) {
           const content = new TextDecoder('utf8').decode(data.slice(offset, offset + header.size));
           
-          if (isJsonl) {
+          if (isJsonl && header.size > largestJsonlSize) {
+            // Only replace if this JSONL is larger (likely the main results file)
+            console.log(`Found larger JSONL: ${header.size} bytes (was ${largestJsonlSize})`);
             jsonlContent = content;
+            largestJsonlSize = header.size;
           }
           if (isReport) {
             try {
@@ -77,9 +84,10 @@ export function extractFromTar(data: Uint8Array): { jsonlContent: string | null;
       offset += paddedSize;
     }
 
-    // Early exit if we found both files
-    if (jsonlContent && reportContent) {
-      console.log('Found both files, exiting early');
+    // Early exit if we found both files with meaningful content
+    // Only exit if JSONL is reasonably sized (> 100KB to ensure it's the main file)
+    if (jsonlContent && reportContent && largestJsonlSize > 100000) {
+      console.log('Found both files with sufficient JSONL size, exiting early');
       break;
     }
   }
