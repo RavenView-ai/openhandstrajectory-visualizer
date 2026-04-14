@@ -1,6 +1,5 @@
 import { 
   TrajectoryItem, 
-  Config, 
   AgentStateChange, 
   UserMessage, 
   AssistantMessage, 
@@ -18,8 +17,27 @@ import {
   ThinkObservation
 } from '../types/share';
 
-export const isConfig = (data: TrajectoryItem): data is Config =>
-  "action" in data && data.action === "initialize";
+// OpenHands index history format checkers
+export const isEnvironmentEvent = (data: any): boolean =>
+  data?.source === "environment" && data?.key !== undefined;
+
+export const isSystemPrompt = (data: any): boolean =>
+  data?.source === "agent" && data?.system_prompt !== undefined;
+
+export const isUserLLMMessage = (data: any): boolean =>
+  data?.source === "user" && data?.llm_message !== undefined;
+
+export const isAgentThought = (data: any): boolean =>
+  data?.source === "agent" && data?.thought !== undefined;
+
+export const isAgentAction = (data: any): boolean =>
+  data?.source === "agent" && data?.action !== undefined && data?.tool_name !== undefined;
+
+export const isConversationStateUpdate = (data: any): boolean =>
+  data?.source === "environment" && data?.kind === "ConversationStateUpdateEvent";
+
+export const isModelResponse = (data: any): boolean =>
+  data?.source === "environment" && data?.kind === "ModelResponseEvent";
 
 export const isAgentStateChange = (data: TrajectoryItem): data is AgentStateChange =>
   "observation" in data && 
