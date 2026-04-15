@@ -9,6 +9,8 @@ import { WorkflowRun } from './types';
 import { UploadTrajectory } from './components/upload/UploadTrajectory';
 import { EvaluationUpload } from './components/upload/EvaluationUpload';
 import { UploadContent } from './types/upload';
+import pako from 'pako';
+import { extractFromTar } from './lib/tarExtractor';
 
 const TokenPrompt: React.FC<{ isDark?: boolean }> = ({ isDark = false }) => {
   const [token, setToken] = useState('');
@@ -381,6 +383,7 @@ const App: React.FC<{ router?: boolean }> = ({ router = true }) => {
         const searchParams = new URLSearchParams(location.search);
         const dataParam = searchParams.get('data');
         const fileUrlParam = searchParams.get('fileUrl');
+        const inUrlParam = searchParams.get('inUrl');
         
         // Process embedded data parameter
         if (dataParam) {
@@ -456,6 +459,62 @@ const App: React.FC<{ router?: boolean }> = ({ router = true }) => {
                   alert(`Failed to load trajectory from URL: ${error.message}\nProxy attempt also failed: ${proxyError.message}`);
                   throw proxyError; // Re-throw to trigger the finally block
                 });
+            })
+            .finally(() => {
+              setIsLoadingTrajectory(false);
+              // Clear the URL parameter to avoid reloading the same data
+              navigate(location.pathname, { replace: true });
+            });
+          
+          return;
+        }
+        
+        // Process inUrl parameter - fetch and extract tar.gz files from URL
+        if (inUrlParam) {
+          console.log('Found inUrl parameter, fetching tar.gz from:', inUrlParam);
+          setIsLoadingTrajectory(true);
+          
+          fetch(inUrlParam, {
+            mode: 'cors',
+            headers: {
+              'Accept': 'application/gzip, application/x-tar, */*'
+            }
+          })
+            .then(response => {
+              if (!response.ok) {
+                throw new Error(`Failed to fetch tar.gz: ${response.status} ${response.statusText}`);
+              }
+              return response.arrayBuffer();
+            })
+            .then(buffer => {
+              console.log('Successfully fetched tar.gz, decompressing...');
+              const gzippedData = new Uint8Array(buffer);
+              
+              let decompressed: Uint8Array;
+              try {
+                decompressed = pako.ungzip(gzippedData);
+              } catch {
+                decompressed = pako.inflate(gzippedData);
+              }
+              
+              console.log('Extracting from tar...');
+              const { jsonlContent, reportContent } = extractFromTar(decompressed);
+              
+              if (!jsonlContent) {
+                throw new Error('No JSONL content found in archive');
+              }
+              
+              setUploadedContent({
+                content: {
+                  fileType: 'full_archive' as const,
+                  jsonlContent,
+                  reportContent
+                }
+              });
+            })
+            .catch(error => {
+              console.error('Error fetching tar.gz from URL:', error);
+              alert(`Failed to load tar.gz from URL: ${error.message}`);
             })
             .finally(() => {
               setIsLoadingTrajectory(false);
