@@ -401,12 +401,11 @@ const App: React.FC<{ router?: boolean }> = ({ router = true }) => {
           }
         }
         
+        
         // Process fileUrl parameter - fetch trajectory from external URL
         if (fileUrlParam) {
           console.log('Found fileUrl parameter, fetching trajectory from:', fileUrlParam);
           
-          // Show loading indicator
-          setIsLoadingTrajectory(true);
           
           // Fetch the trajectory file from the provided URL
           fetch(fileUrlParam, {
@@ -433,7 +432,7 @@ const App: React.FC<{ router?: boolean }> = ({ router = true }) => {
               
               // If direct fetch fails, try using a CORS proxy as fallback
               console.log('Attempting to fetch via CORS proxy...');
-              const proxyUrl = `https://cors-anywhere.herokuapp.com/${fileUrlParam}`;
+              const proxyUrl = `https://api.allorigins.win/raw/${fileUrlParam}`;
               
               return fetch(proxyUrl, {
                 headers: {
@@ -512,6 +511,7 @@ const App: React.FC<{ router?: boolean }> = ({ router = true }) => {
       <div className="h-screen max-h-screen flex flex-col overflow-hidden bg-gray-50 dark:bg-gray-900">
         {/* Show loading overlay when processing trajectory */}
         {isLoadingTrajectory && <TrajectoryLoadingOverlay />}
+        
         
         {/* Header */}
         <header className={`${isDark ? 'bg-gray-800 border-gray-700' : 'bg-white border-gray-200'} border-b`}>

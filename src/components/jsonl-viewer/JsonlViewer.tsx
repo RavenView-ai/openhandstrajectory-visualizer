@@ -21,7 +21,12 @@ import {
   isEditAction,
   isEditObservation,
   isThinkAction,
-  isThinkObservation
+  isThinkObservation,
+  isEnvironmentEvent,
+  isSystemPrompt,
+  isUserLLMMessage,
+  isAgentThought,
+  isAgentAction
 } from "../../utils/share";
 import {
   AgentStateChangeComponent,
@@ -38,7 +43,12 @@ import {
   EditObservationComponent,
   ErrorObservationComponent,
   ThinkActionComponent,
-  ThinkObservationComponent
+  ThinkObservationComponent,
+  EnvironmentEventComponent,
+  SystemPromptComponent,
+  UserLLMMessageComponent,
+  AgentThoughtComponent,
+  AgentActionComponent
 } from "../share/trajectory-list-items";
 import { CSyntaxHighlighter } from "../syntax-highlighter";
 import { TrajectoryCard } from "../share/trajectory-card";
@@ -332,6 +342,21 @@ const JsonlViewer: React.FC<JsonlViewerProps> = ({ content }) => {
                 <div className="flex flex-col items-center gap-4">
                   {filteredTrajectoryItems.map((item, index) => {
                     const trajectoryItem = item as unknown as TrajectoryItem;
+                    
+                    // Check OpenHands history format first
+                    if (isEnvironmentEvent(item)) {
+                      return <EnvironmentEventComponent key={index} event={item} />;
+                    } else if (isSystemPrompt(item)) {
+                      return <SystemPromptComponent key={index} data={item} />;
+                    } else if (isUserLLMMessage(item)) {
+                      return <UserLLMMessageComponent key={index} message={item} />;
+                    } else if (isAgentThought(item)) {
+                      return <AgentThoughtComponent key={index} thought={item} />;
+                    } else if (isAgentAction(item)) {
+                      return <AgentActionComponent key={index} action={item} />;
+                    }
+                    
+                    // Then check standard format
                     if (isAgentStateChange(trajectoryItem)) {
                       return <AgentStateChangeComponent key={index} state={trajectoryItem as any} />;
                     } else if (isUserMessage(trajectoryItem)) {
