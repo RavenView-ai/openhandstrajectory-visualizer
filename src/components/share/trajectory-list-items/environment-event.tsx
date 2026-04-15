@@ -9,7 +9,7 @@ interface EnvironmentEventProps {
 export const EnvironmentEventComponent: React.FC<EnvironmentEventProps> = ({ event }) => {
   const formatValue = (value: any): string => {
     if (typeof value === 'object') {
-      // For specific keys, format nicely
+      // For full_state events, show a summary (detailed view is in AgentContextComponent)
       if (event.key === 'full_state' && value.agent) {
         return `Agent: ${value.agent?.llm?.model || 'unknown'}`;
       }
